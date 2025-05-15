@@ -41,18 +41,38 @@ def deepseekv3_request(api_key):
     ans2_5 = ds_get(temp2_5, api_key)
     return ans1, ans2, ans1_5, ans2_5
 
-def get_generate(base_model, inputs1, eos_token_id):
-    outputs1 = base_model.generate(
-        input_ids=inputs1['input_ids'],
-        attention_mask=inputs1['attention_mask'],
+def get_generate(base_model, inputs, eos_token_id):
+    outputs = base_model.generate(
+        input_ids=inputs['input_ids'],
+        attention_mask=inputs['attention_mask'],
         max_new_tokens=10,
         num_beams=5,
         early_stopping=True,
         eos_token_id=eos_token_id,
     )
-    return outputs1
+    outputs = outputs[:, 128:]
 
-def get_ans(tokenizer, base_model, device):
+    return outputs
+
+def get_generate_multi(base_model, inputs, eos_token_id, num_ret_seq=5):
+    outputs = base_model.generate(
+        input_ids=inputs['input_ids'],
+        attention_mask=inputs['attention_mask'],
+        max_new_tokens=10,
+        num_beams=1,
+        early_stopping=True,
+        eos_token_id=eos_token_id,
+        do_sample=True,
+        # top_k=100,
+        top_p=0.9,
+        temperature=0.9,
+        num_return_sequences=num_ret_seq,
+    )
+    outputs = outputs[:, 128:]
+
+    return outputs
+
+def get_ans(tokenizer, base_model, device, single: bool):
     eos_token_id = tokenizer.convert_tokens_to_ids(".")
 
     file_name = r"..\train_data.json"
@@ -70,20 +90,25 @@ def get_ans(tokenizer, base_model, device):
                         return_tensors="pt", padding_side="left").to(device)
     inputs2 = tokenizer(req_2, padding="max_length", truncation=True, max_length=128,
                         return_tensors="pt", padding_side="left").to(device)
-    outputs1 = get_generate(base_model, inputs1, eos_token_id)
-    outputs2 = get_generate(base_model, inputs2, eos_token_id)
-
-    s_out1 = tokenizer.decode(outputs1[0], skip_special_tokens=True)
-    s_out2 = tokenizer.decode(outputs2[0], skip_special_tokens=True)
+    if single:
+        outputs1 = get_generate(base_model, inputs1, eos_token_id)
+        outputs2 = get_generate(base_model, inputs2, eos_token_id)
+        s_out1 = tokenizer.decode(outputs1[0], skip_special_tokens=True)
+        s_out2 = tokenizer.decode(outputs2[0], skip_special_tokens=True)
+    else:
+        outputs1 = get_generate_multi(base_model, inputs1, eos_token_id)
+        outputs2 = get_generate_multi(base_model, inputs2, eos_token_id)
+        s_out1 = tokenizer.batch_decode(outputs1, skip_special_tokens=True)
+        s_out2 = tokenizer.batch_decode(outputs2, skip_special_tokens=True)
 
     return s_out1, s_out2
 
-def lightweight_llm_request(base_path):
+def lightweight_llm_request(base_path, single=True):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = AutoTokenizer.from_pretrained(base_path)
     tokenizer.pad_token = tokenizer.eos_token
     base_model = AutoModelForCausalLM.from_pretrained(base_path).to(device)
 
-    s_out1, s_out2 = get_ans(tokenizer, base_model, device)
+    s_out1, s_out2 = get_ans(tokenizer, base_model, device, single)
 
     return s_out1, s_out2
